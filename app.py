@@ -4,7 +4,7 @@ import streamlit as st
 
 from config import CHAT_MODEL, TOP_K
 from gemini import MissingKey
-from rag import answer_stream, drop_index_cache, get_collection, retrieve, backend_status
+from rag import answer_stream, drop_index_cache, get_collection, retrieve, backend_status, visible_sources
 
 st.set_page_config(page_title="Technical Support Assistant", page_icon="🛠️")
 st.title("🛠️ Technical Support Assistant")
@@ -88,7 +88,7 @@ if prompt := st.chat_input("Ask a technical question..."):
                     "score": s.similarity,
                     "preview": s.text[:300] + ("..." if len(s.text) > 300 else ""),
                 }
-                for s in sources
+                for s in visible_sources(sources)
             ]
             response = st.write_stream(answer_stream(prompt, sources, history))
         except Exception as exc:

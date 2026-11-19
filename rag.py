@@ -11,6 +11,8 @@ from config import CHROMA_DIR, COLLECTION_NAME, SYSTEM_PROMPT, TOP_K, DATA_SOURC
 from gemini import get_embeddings, get_llm
 
 MIN_SIMILARITY = 0.25
+# Marker source: the reply is already final, so no second model call is needed.
+DIRECT_SOURCE = "direct"
 HISTORY_TURNS = 6
 
 ANSWER_PROMPT = ChatPromptTemplate.from_messages(
@@ -87,10 +89,12 @@ def backend_status() -> dict:
 def retrieve(question: str, top_k: int = TOP_K, history: list[dict] | None = None) -> list[Source]:
     """Retrieve top-matching document chunks above the similarity threshold."""
     if DATA_SOURCE == "mysql_api":
-        from products import search_products
-        result = search_products(question, history, limit=top_k)
+        from products import route_question
+        routed = route_question(question, history, limit=top_k)
+        if routed["kind"] == "direct":
+            return [Source(n=0, source=DIRECT_SOURCE, chunk=0, similarity=1.0, text=routed["reply"])]
         return [Source(n=1, source="Local MySQL / Laravel API", chunk=0,
-                       similarity=1.0, text=json.dumps(result, ensure_ascii=False))]
+                       similarity=1.0, text=json.dumps(routed["result"], ensure_ascii=False))]
     store = get_vectorstore()
     collection = store._collection
     
@@ -133,9 +137,20 @@ def _format_history(history: list[dict]) -> list:
     return messages
 
 
+def is_direct(sources: list[Source]) -> bool:
+    return len(sources) == 1 and sources[0].source == DIRECT_SOURCE
+
+
+def visible_sources(sources: list[Source]) -> list[Source]:
+    """Sources worth showing to the user (a direct reply has none)."""
+    return [] if is_direct(sources) else sources
+
+
 def answer(question: str, history: list[dict] | None = None) -> tuple[str, list[Source]]:
     # 1. Search relevant documents
     sources = retrieve(question, history=history)
+    if is_direct(sources):
+        return sources[0].text, []
     
     # 2. Convert retrieved documents into a text context
     if sources:
@@ -171,6 +186,9 @@ def _response_text(content) -> str:
 
 
 def answer_stream(question: str, sources: list[Source], history: list[dict] | None = None):
+    if is_direct(sources):
+        yield sources[0].text
+        return
     context = "\n\n".join(
         f"[{s.n}] (from {s.source})\n{s.text}" for s in sources
     ) or "(no matching documentation was found)"

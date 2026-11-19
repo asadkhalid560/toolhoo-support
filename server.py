@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from config import CHAT_MODEL
 from gemini import MissingKey
-from rag import HISTORY_TURNS, answer_stream, get_collection, retrieve, backend_status
+from rag import HISTORY_TURNS, answer_stream, get_collection, retrieve, backend_status, visible_sources
 
 BASE_DIR = Path(__file__).parent
 STATIC = BASE_DIR / "static"
@@ -94,7 +94,7 @@ def chat(req: ChatRequest):
                         "score": round(s.similarity, 3),
                         "preview": s.text[:240],
                     }
-                    for s in sources
+                    for s in visible_sources(sources)
                 ],
             })
 
