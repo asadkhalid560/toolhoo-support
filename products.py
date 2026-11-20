@@ -1,9 +1,10 @@
 """LangGraph-routed structured search over the ToolHoo product API.
 
 One Gemini call both classifies the question and extracts search filters.
-Product questions continue to the API; chit-chat and off-topic questions are
-answered from the reply produced in that same call, so they never reach the
-product API or a second model call.
+Product questions continue to the API; policy and know-how questions go to the
+Chroma knowledge base; chit-chat and off-topic questions are answered from the
+reply produced in that same call, so they never reach the product API or a
+second model call.
 """
 import json
 from typing import Literal, TypedDict
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from config import TOOLHOO_API_URL
 from gemini import get_llm
+from knowledge import search as search_knowledge
 
 FALLBACK_REPLY = (
     "I can help with ToolHoo products: prices, specifications and stock. "
@@ -35,16 +37,18 @@ class ProductFilter(BaseModel):
     field_id: int = Field(description="An actual field ID from the category catalog")
     value: str = Field(description="Exact stored value from that field, including units")
 
-
+#description Gemini ke liye hidayat hai. Misal ke taur par agar user ne poocha "Mujhe 3 mm drill chahiye", to intent product_search hoga aur filter field_id=123 (jo ke drill size ka hai) aur value="3.00 mm" hoga. Agar user ne poocha "Aap kaun hain?", to intent chitchat hoga aur reply="Main ToolHoo ka assistant hoon." hoga, aur filters khali rahenge.
 class ProductSearch(BaseModel):
-    intent: Literal["product_search", "chitchat", "off_topic"] = Field(
+    intent: Literal["product_search", "knowledge", "chitchat", "off_topic"] = Field(
         description="product_search: any question about products, tools, sizes, prices, stock, "
-        "brands or a follow-up to such a question. chitchat: greetings, thanks, who/what are you. "
+        "brands or a follow-up to such a question. knowledge: store policies and general know-how "
+        "not tied to one product's price or stock (returns, refunds, shipping, delivery, payment, "
+        "warranty, how to choose or use a drill bit). chitchat: greetings, thanks, who/what are you. "
         "off_topic: anything unrelated to the store. When in doubt, choose product_search."
     )
     reply: str | None = Field(
         default=None,
-        description="Only for chitchat or off_topic: a short friendly reply in the user's own "
+        description="Only for chitchat or off_topic (null for product_search and knowledge): a short friendly reply in the user's own "
         "language and script. For off_topic politely say you only help with ToolHoo products. "
         "Never state product facts here. Leave null for product_search.",
     )
@@ -69,7 +73,8 @@ If a requested value is absent, preserve that requested value; do not substitute
 Do not add in_stock or a brand unless requested. If category/fields suffice, leave q null.
 Use conversation history to resolve follow-up questions; a short follow-up about a product
 the user was just discussing is product_search.
-For chitchat and off_topic leave every filter empty and write the reply.
+For knowledge, chitchat and off_topic leave every filter empty. Write a reply only for
+chitchat and off_topic; leave it null for knowledge.
 CATALOG: {catalog}"""),
     ("human", "History: {history}\nQuestion: {question}"),
 ])
@@ -82,12 +87,14 @@ class _State(TypedDict, total=False):
     search: ProductSearch
     outcome: dict
 
-
+#private function hai _
+#ensure_ascii=False ka matlab hai ke Urdu/Hindi jaise non-English characters \u0627 jaisi ajeeb shakl mein na badlein
 def _understand(state: _State) -> dict:
     catalog = api_get("catalog")
     chain = PROMPT | get_llm().with_structured_output(ProductSearch)
     search = chain.invoke({
         "catalog": json.dumps(catalog, ensure_ascii=False),
+        #json.dumps dict ko text (string) bana deta hai.
         "history": json.dumps(state.get("history") or [], ensure_ascii=False),
         "question": state["question"],
     })
@@ -95,7 +102,12 @@ def _understand(state: _State) -> dict:
 
 
 def _route(state: _State) -> str:
-    return "fetch" if state["search"].intent == "product_search" else "direct"
+    intent = state["search"].intent
+    if intent == "product_search":
+        return "fetch"
+    if intent == "knowledge":
+        return "kb"
+    return "direct"
 
 
 def _fetch(state: _State) -> dict:
@@ -110,6 +122,14 @@ def _fetch(state: _State) -> dict:
     return {"outcome": {"kind": "products", "result": api_get("products", params)}}
 
 
+def _knowledge(state: _State) -> dict:
+    chunks = search_knowledge(state["question"])
+    return {"outcome": {"kind": "knowledge", "chunks": [
+        {"source": c.source, "chunk": c.chunk, "similarity": c.similarity, "text": c.text}
+        for c in chunks
+    ]}}
+
+
 def _direct(state: _State) -> dict:
     reply = (state["search"].reply or "").strip() or FALLBACK_REPLY
     return {"outcome": {"kind": "direct", "reply": reply}}
@@ -119,10 +139,12 @@ def _build():
     graph = StateGraph(_State)
     graph.add_node("understand", _understand)
     graph.add_node("fetch", _fetch)
+    graph.add_node("kb", _knowledge)
     graph.add_node("direct", _direct)
     graph.add_edge(START, "understand")
-    graph.add_conditional_edges("understand", _route, {"fetch": "fetch", "direct": "direct"})
+    graph.add_conditional_edges("understand", _route, {"fetch": "fetch", "kb": "kb", "direct": "direct"})
     graph.add_edge("fetch", END)
+    graph.add_edge("kb", END)
     graph.add_edge("direct", END)
     return graph.compile()
 
@@ -131,6 +153,7 @@ _GRAPH = _build()
 
 
 def route_question(question: str, history: list[dict] | None = None, limit: int = 10) -> dict:
-    """Return {"kind": "products", "result": ...} or {"kind": "direct", "reply": ...}."""
+    """Return {"kind": "products", "result": ...}, {"kind": "knowledge", "chunks": [...]}
+    or {"kind": "direct", "reply": ...}."""
     state = _GRAPH.invoke({"question": question, "history": history or [], "limit": limit})
     return state["outcome"]

@@ -84,8 +84,22 @@ behaviour, version numbers, endpoints, or config keys.
 - Cite the sources you used with their bracketed numbers, e.g. [1], [2].
 - Be concise and concrete. Prefer numbered steps for procedures and fenced code \
 blocks for commands, config, or code.
-- Keep the customer's own terminology where possible."""
+- Keep the customer's own terminology where possible.
+- Reply in the same language AND script as the customer's question: Roman Urdu or Hinglish \nwritten in Latin letters gets a reply in Latin letters, never Devanagari or Arabic script."""
 
 
 DATA_SOURCE = os.getenv("DATA_SOURCE", "mysql_api")
 TOOLHOO_API_URL = os.getenv("TOOLHOO_API_URL", "http://127.0.0.1:8001/api/chatbot")
+
+# Store policies and know-how (returns, shipping, warranty, drill guide). Kept in
+# its own collection so stale product rows from the old spreadsheet index can
+# never be retrieved for a policy question.
+KNOWLEDGE_DIR = BASE_DIR / "knowledge"
+KNOWLEDGE_DB = BASE_DIR / "knowledge_db"
+KNOWLEDGE_COLLECTION = "toolhoo_knowledge"
+# Gemini embedding scores are compressed (unrelated text still lands near 0.55),
+# so an absolute floor cannot separate on-topic from off-topic. The router's
+# intent does that. Here we only keep chunks close to the best match.
+KNOWLEDGE_MIN_SIMILARITY = 0.5
+KNOWLEDGE_SCORE_BAND = 0.06
+KNOWLEDGE_MAX_CHUNKS = 3

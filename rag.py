@@ -93,6 +93,10 @@ def retrieve(question: str, top_k: int = TOP_K, history: list[dict] | None = Non
         routed = route_question(question, history, limit=top_k)
         if routed["kind"] == "direct":
             return [Source(n=0, source=DIRECT_SOURCE, chunk=0, similarity=1.0, text=routed["reply"])]
+        if routed["kind"] == "knowledge":
+            return [Source(n=i, source=c["source"], chunk=c["chunk"],
+                           similarity=c["similarity"], text=c["text"])
+                    for i, c in enumerate(routed["chunks"], start=1)]
         return [Source(n=1, source="Local MySQL / Laravel API", chunk=0,
                        similarity=1.0, text=json.dumps(routed["result"], ensure_ascii=False))]
     store = get_vectorstore()
